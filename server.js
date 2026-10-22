@@ -45,7 +45,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Preparamos las instrucciones para la IA
+        // Preparamos las instrucciones para la IA (Más estricto para no inventar)
         const systemPrompt = `
             Eres MUVIBOT, el asistente de MUVIBOX.
             El usuario te pide: "${query}"
@@ -55,10 +55,10 @@ io.on('connection', (socket) => {
             
             Instrucciones:
             1. Responde en español de forma amigable y conversacional.
-            2. Si el usuario pide una recomendación, elige UNA película que exista en la lista.
-            3. Para que la TV sepa qué reproducir, termina tu respuesta poniendo el TÍTULO EXACTO de la película entre corchetes. Ejemplo: Claro, te recomiendo esta: [Shrek 2].
-            4. Si el usuario solo saluda o pregunta algo general, responde sin usar corchetes.
-            5. Si no hay coincidencias, sugiere una película aleatoria de la lista.
+            2. Elige UNA película de la lista que se adapte a lo que pide el usuario.
+            3. ES OBLIGATORIO que termines tu respuesta poniendo el TÍTULO EXACTO entre corchetes. Ejemplo: Claro, te recomiendo esta: [Shrek 2].
+            4. NO INVENTES PELÍCULAS. Debes copiar y pegar el título tal cual aparece en la lista.
+            5. Si el usuario solo saluda, responde sin usar corchetes.
         `;
 
         try {
@@ -80,19 +80,20 @@ io.on('connection', (socket) => {
             let movieToPlay = null;
 
             if (match) {
-                const exactTitle = match[1];
-                movieToPlay = catalog.find(t => t.toLowerCase() === exactTitle.toLowerCase());
+                const exactTitle = match[1].toLowerCase().trim();
+                // Búsqueda flexible: por si la IA agrega el año o espacios extra
+                movieToPlay = catalog.find(t => t.toLowerCase().trim() === exactTitle) 
+                           || catalog.find(t => t.toLowerCase().includes(exactTitle));
             }
 
-                        // 3. Enviamos la respuesta limpia al celular
+            // 3. Enviamos la respuesta limpia al celular
             let textoLimpio = botReply.replace(/\[.*?\]/g, '').trim();
             
             // Si la IA solo devolvió el título entre corchetes, el texto se queda vacío.
-            // Le ponemos un mensaje por defecto para que no salga el globo en blanco.
             if (!textoLimpio) {
                 textoLimpio = movieToPlay 
                     ? `¡Buena elección! Te recomiendo ver: ${movieToPlay}` 
-                    : "Aquí tienes una recomendación.";
+                    : "No encontré esa película en el catálogo. Intenta pedirme otro género.";
             }
 
             io.to(room).emit('muvibot-response', { 
