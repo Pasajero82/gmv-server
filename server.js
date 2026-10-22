@@ -68,7 +68,7 @@ io.on('connection', (socket) => {
                     { role: "system", content: systemPrompt },
                     { role: "user", content: query }
                 ],
-                model: "llama-3.1-8b-instant",
+                model: "llama-3.3-70b-versatile",
                 temperature: 0.7,
                 max_tokens: 150,
             });
