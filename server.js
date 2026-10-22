@@ -84,10 +84,20 @@ io.on('connection', (socket) => {
                 movieToPlay = catalog.find(t => t.toLowerCase() === exactTitle.toLowerCase());
             }
 
-            // 3. Enviamos la respuesta al celular
+                        // 3. Enviamos la respuesta limpia al celular
+            let textoLimpio = botReply.replace(/\[.*?\]/g, '').trim();
+            
+            // Si la IA solo devolvió el título entre corchetes, el texto se queda vacío.
+            // Le ponemos un mensaje por defecto para que no salga el globo en blanco.
+            if (!textoLimpio) {
+                textoLimpio = movieToPlay 
+                    ? `¡Buena elección! Te recomiendo ver: ${movieToPlay}` 
+                    : "Aquí tienes una recomendación.";
+            }
+
             io.to(room).emit('muvibot-response', { 
                 success: true, 
-                text: botReply.replace(/\[.*?\]/g, '').trim() 
+                text: textoLimpio
             });
 
             // 4. Si la película existe, le decimos a la TV que la reproduzca
