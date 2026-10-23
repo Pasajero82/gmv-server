@@ -253,6 +253,25 @@ app.get('/mail/enviar', async (req, res) => {
   res.json(data);
 });
 
+// Enviar por POST (la tele manda la ruta tal cual, sin codificar; evita
+// problemas con acentos y espacios en los nombres de archivo).
+app.post('/mail/enviar', express.json(), async (req, res) => {
+  const b = req.body || {};
+  const u = String(b.u || '');
+  const t = String(b.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const data = await appsGet('enviar', {
+    user: u, token: t,
+    para: String(b.para || ''),
+    archivo: String(b.archivo || ''),
+    titulo: String(b.titulo || ''),
+    anio: String(b.anio || ''),
+    poster: String(b.poster || '')
+  });
+  clearMailCache(u);
+  res.json(data);
+});
+
 // Marcar cartas guardadas como aplicadas (ya entraron a Mi Lista)
 app.get('/mail/aplicar', async (req, res) => {
   const u = String(req.query.u || '');
