@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -80,15 +81,15 @@ app.get('/roku/poll', (req, res) => {
     return res.json({ seq: state.seq, cmds: [] });
   }
 
+  // Primer contacto: no repetir ordenes viejas
+  if (after === 0) {
+    return res.json({ seq: state.seq, cmds: [] });
+  }
+
   const pending = state.items.filter(x => x.id > after);
 
   if (pending.length > 0) {
     return res.json({ seq: state.seq, cmds: pending });
-  }
-
-  // Primer contacto: no repetir ordenes viejas
-  if (after === 0) {
-    return res.json({ seq: state.seq, cmds: [] });
   }
 
   const waiter = { res, after, timer: null };
@@ -129,6 +130,139 @@ app.get('/roku/status', (req, res) => {
     pendientes: state.items.length,
     esperando: (waiters.get(room) || []).length
   });
+});
+
+// ============================================================
+// BUZON / ENVIOS  (proxy a Google Apps Script, con cache)
+// ============================================================
+const APPS_URL = 'https://script.google.com/macros/s/AKfycbzhmmiESNQqAZDtcHDSLCa-y2hb9mi_uL7f3QsBB8HhSW2wUmgf9SQiTQqvFMkyDGcBPg/exec';
+const mailCache = new Map(); // key -> { v, exp }
+
+function cacheGet(key) {
+  const c = mailCache.get(key);
+  if (!c) return null;
+  if (Date.now() > c.exp) { mailCache.delete(key); return null; }
+  return c.v;
+}
+function cacheSet(key, v, seconds) {
+  mailCache.set(key, { v, exp: Date.now() + seconds * 1000 });
+  if (mailCache.size > 300) {
+    const first = mailCache.keys().next().value;
+    mailCache.delete(first);
+  }
+}
+function clearMailCache(user) {
+  for (const k of Array.from(mailCache.keys())) {
+    if (k.indexOf(user + ':') === 0) mailCache.delete(k);
+  }
+}
+async function appsGet(action, params) {
+  const qs = new URLSearchParams(Object.assign({ action: action }, params));
+  return httpGetJson(APPS_URL + '?' + qs.toString(), 5);
+}
+function httpGetJson(url, redirectsLeft) {
+  return new Promise((resolve) => {
+    const req = https.get(url, { headers: { 'Accept': 'application/json' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
+        res.resume();
+        resolve(httpGetJson(res.headers.location, redirectsLeft - 1));
+        return;
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (e) { resolve({ success: false, message: 'Respuesta invalida del servidor.' }); }
+      });
+    });
+    req.on('error', () => resolve({ success: false, message: 'No se pudo conectar con el servidor de accesos.' }));
+    req.setTimeout(25000, () => {
+      req.destroy();
+      resolve({ success: false, message: 'El servidor de accesos tardo demasiado.' });
+    });
+  });
+}
+
+// Lista de usuarios (para elegir destinatario desde la tele)
+app.get('/mail/usuarios', async (req, res) => {
+  const u = String(req.query.u || '');
+  const t = String(req.query.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const key = u + ':users';
+  const hit = cacheGet(key);
+  if (hit) return res.json(hit);
+  const data = await appsGet('usuarios', { user: u, token: t });
+  if (data.success) cacheSet(key, data, 300);
+  res.json(data);
+});
+
+// Cuantas cartas nuevas tiene el usuario
+app.get('/mail/count', async (req, res) => {
+  const u = String(req.query.u || '');
+  const t = String(req.query.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const key = u + ':count';
+  const hit = cacheGet(key);
+  if (hit) return res.json(hit);
+  const data = await appsGet('contar', { user: u, token: t });
+  if (data.success) cacheSet(key, data, 45);
+  res.json(data);
+});
+
+// Lista de cartas del buzon
+app.get('/mail/list', async (req, res) => {
+  const u = String(req.query.u || '');
+  const t = String(req.query.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const key = u + ':list';
+  const hit = cacheGet(key);
+  if (hit) return res.json(hit);
+  const data = await appsGet('buzon', { user: u, token: t });
+  if (data.success) cacheSet(key, data, 15);
+  res.json(data);
+});
+
+// Cambiar estado de una carta (visto / guardada / ignorada)
+app.get('/mail/estado', async (req, res) => {
+  const u = String(req.query.u || '');
+  const t = String(req.query.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const data = await appsGet('carta_estado', {
+    user: u, token: t,
+    id: String(req.query.id || ''),
+    estado: String(req.query.estado || '')
+  });
+  clearMailCache(u);
+  res.json(data);
+});
+
+// Enviar una pelicula a otro usuario
+app.get('/mail/enviar', async (req, res) => {
+  const u = String(req.query.u || '');
+  const t = String(req.query.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const data = await appsGet('enviar', {
+    user: u, token: t,
+    para: String(req.query.para || ''),
+    archivo: String(req.query.archivo || ''),
+    titulo: String(req.query.titulo || ''),
+    anio: String(req.query.anio || ''),
+    poster: String(req.query.poster || '')
+  });
+  clearMailCache(u);
+  res.json(data);
+});
+
+// Marcar cartas guardadas como aplicadas (ya entraron a Mi Lista)
+app.get('/mail/aplicar', async (req, res) => {
+  const u = String(req.query.u || '');
+  const t = String(req.query.t || '');
+  if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
+  const data = await appsGet('aplicar_guardadas', {
+    user: u, token: t, ids: String(req.query.ids || '')
+  });
+  clearMailCache(u);
+  res.json(data);
 });
 
 // ============================================================
