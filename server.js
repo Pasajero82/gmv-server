@@ -214,11 +214,9 @@ app.get('/mail/list', async (req, res) => {
   const u = String(req.query.u || '');
   const t = String(req.query.t || '');
   if (!u || !t) return res.status(400).json({ success: false, message: 'Faltan datos.' });
-  const key = u + ':list';
-  const hit = cacheGet(key);
-  if (hit) return res.json(hit);
+  
+  // Quitamos la caché de la lista para que siempre traiga datos frescos
   const data = await appsGet('buzon', { user: u, token: t });
-  if (data.success) cacheSet(key, data, 15);
   res.json(data);
 });
 
